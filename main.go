@@ -1,72 +1,96 @@
+// This example demonstrates how to authenticate with Spotify using the authorization code flow.
+// In order to run this example yourself, you'll need to:
+//
+//  1. Register an application at: https://developer.spotify.com/my-applications/
+//       - Use "http://localhost:8080/callback" as the redirect URI
+//  2. Set the SPOTIFY_ID environment variable to the client ID you got in step 1.
+//  3. Set the SPOTIFY_SECRET environment variable to the client secret from step 1.
+
 package main
 
 import (
     "context"
-    "encoding/json"
     "fmt"
-    "io/ioutil"
+    "github.com/joho/godotenv"
+    "github.com/zmb3/spotify/v2"
+    "github.com/zmb3/spotify/v2/auth"
     "log"
     "net/http"
     "os"
-
-    "github.com/joho/godotenv"
-    "github.com/zmb3/spotify"
-    "golang.org/x/oauth2"
-    "golang.org/x/oauth2/clientcredentials"
 )
 
-type Playlist struct {
-    ID          string  `json:"id"`
-    IsPublic    bool    `json:"public"`
-    Name        string  `json:"name"`
-    Description string  `json:"description"`
+// redirectURI is the OAuth redirect URI for the application.
+// You must register an application at Spotify's developer portal
+// and enter this value.
+const redirectURI = "http://localhost:8080/callback"
+
+var (
+    err = godotenv.Load()
+
+    auth  = spotifyauth.New(
+                spotifyauth.WithClientID(os.Getenv("SPOTIFY_ID")),
+                spotifyauth.WithClientSecret(os.Getenv("SPOTIFY_SECRET")),
+                spotifyauth.WithRedirectURL(redirectURI),
+                spotifyauth.WithScopes(spotifyauth.ScopeUserReadPrivate, spotifyauth.ScopeUserTopRead))
+    ch    = make(chan *spotify.Client)
+    state = "abc123"
+)
+
+func init() {
+    // err := godotenv.Load()
+    if err != nil {
+        log.Fatalf("Error loading .env file: ", err)
+    }
 }
 
 func main() {
-    accessToken := getAccessToken()
-    fmt.Println("Access token: " + accessToken.AccessToken)
+    // first start an HTTP server
+    http.HandleFunc("/callback", completeAuth)
+    http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+        log.Println("Got request for:", r.URL.String())
+    })
+    go func() {
+        err := http.ListenAndServe(":8080", nil)
+        handleError(err, "Error starting server on port 8080")
+    }()
 
-    // https://open.spotify.com/playlist/37i9dQZEVXcO0WnzMtBl3g?si=9894c660aeb846cb
-    playlistID := "37i9dQZEVXcO0WnzMtBl3g"
+    url := auth.AuthURL(state)
+    fmt.Println("Please log in to Spotify by visiting the following page in your browser:", url)
 
-    url := "https://api.spotify.com/v1/playlists/" + playlistID
-    var bearer = "Bearer " + accessToken.AccessToken
+    // wait for auth to complete
+    client := <-ch
 
-    req, err := http.NewRequest("GET", url, nil)
-    req.Header.Add("Authorization", bearer)
+    ctx := context.Background()
 
-    client := &http.Client{}
-    resp, err := client.Do(req)
-    handleError(err, "Error making HTTP request")
-    defer resp.Body.Close()
+    // use the client to make calls that require authorization
+    user, err := client.CurrentUser(ctx)
+    handleError(err, "Error fetching current user")
+    fmt.Println("You are logged in as:", user.ID)
 
-    byteValue, err := ioutil.ReadAll(resp.Body)
-    handleError(err, "Error while reading the response bytes")
-    // log.Println(string([]byte(byteValue)))
+    topArtists, err := client.CurrentUsersTopArtists(ctx)
+    handleError(err, "Error fetching current user's top artists")
+    fmt.Println("\nTOP ARTISTS (medium term)")
 
-    var playlist Playlist
-    json.Unmarshal([]byte(byteValue), &playlist)
-
-    fmt.Println("playlist id:", playlist.ID)
-    fmt.Println("playlist name:", playlist.Name)
-    fmt.Println("playlist description:", playlist.Description)
-    fmt.Println("playlist public:", playlist.IsPublic)
+    for index, artist := range topArtists.Artists {
+        fmt.Printf("%d. %s (%d)\n", index+1, artist.Name, artist.Popularity)
+    }
 }
 
-func getAccessToken() (*oauth2.Token) {
-    err := godotenv.Load()
-    handleError(err, "Error loading .env file")
-
-    authConfig := &clientcredentials.Config{
-        ClientID: os.Getenv("SPOTIFY_CLIENT_ID"),
-        ClientSecret: os.Getenv("SPOTIFY_CLIENT_SECRET"),
-        TokenURL: spotify.TokenURL,
+func completeAuth(w http.ResponseWriter, r *http.Request) {
+    tok, err := auth.Token(r.Context(), state, r)
+    if err != nil {
+        http.Error(w, "Couldn't get token", http.StatusForbidden)
+        log.Fatal(err)
+    }
+    if st := r.FormValue("state"); st != state {
+        http.NotFound(w, r)
+        log.Fatalf("State mismatch: %s != %s\n", st, state)
     }
 
-    accessToken, err := authConfig.Token(context.Background())
-    handleError(err, "Error retrieving access token")
-
-    return accessToken
+    // use the token to get an authenticated client
+    client := spotify.New(auth.Client(r.Context(), tok))
+    fmt.Fprintf(w, "Login Completed!")
+    ch <- client
 }
 
 func handleError(err error, message string) {
