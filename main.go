@@ -25,6 +25,7 @@ import (
 const redirectURI = "http://localhost:8080/callback"
 
 var (
+    // load env vars before instantiating global vars
     err = godotenv.Load()
 
     auth  = spotifyauth.New(
@@ -37,10 +38,7 @@ var (
 )
 
 func init() {
-    // err := godotenv.Load()
-    if err != nil {
-        log.Fatalf("Error loading .env file: ", err)
-    }
+    handleError(err, "Error loading .env file")
 }
 
 func main() {
@@ -67,12 +65,18 @@ func main() {
     handleError(err, "Error fetching current user")
     fmt.Println("You are logged in as:", user.ID)
 
-    topArtists, err := client.CurrentUsersTopArtists(ctx)
-    handleError(err, "Error fetching current user's top artists")
-    fmt.Println("\nTOP ARTISTS (medium term)")
+    rangeOptions := [3]spotify.Range{spotify.ShortTermRange, spotify.MediumTermRange, spotify.LongTermRange}
 
-    for index, artist := range topArtists.Artists {
-        fmt.Printf("%d. %s (%d)\n", index+1, artist.Name, artist.Popularity)
+    for _, ro := range rangeOptions {
+        timeRange := spotify.Timerange(ro)
+
+        topArtists, err := client.CurrentUsersTopArtists(ctx, timeRange)
+        handleError(err, "Error fetching current user's top artists")
+        fmt.Printf("\nTOP ARTISTS (%s)\n", ro)
+
+        for index, artist := range topArtists.Artists {
+            fmt.Printf("%d. %s (%d)\n", index+1, artist.Name, artist.Popularity)
+        }
     }
 }
 
