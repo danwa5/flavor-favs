@@ -10,6 +10,7 @@ package main
 
 import (
     "context"
+    "errors"
     "flag"
     "fmt"
     "github.com/joho/godotenv"
@@ -38,19 +39,24 @@ var (
     ch    = make(chan *spotify.Client)
     state = "abc123"
 
+    itemType string
+    limit int
+
     commandMap map[string]interface{}
     rangeOptions = [3]spotify.Range{spotify.ShortTermRange, spotify.MediumTermRange, spotify.LongTermRange}
 )
 
 func init() {
     handleError(err, "Error loading .env file")
+
+    // parse command line options
+    flag.StringVar(&itemType, "type", "artists", "\"artists\" or \"tracks\"")
+    flag.IntVar(&limit, "limit", 10, "the number of results per data set")
+    flag.Parse()
+    validateOptions(itemType, limit)
 }
 
 func main() {
-    // load command line options
-    topItemType := flag.String("type", "artists", "\"artists\" or \"tracks\"")
-    flag.Parse()
-
     // start a HTTP server
     http.HandleFunc("/callback", completeAuth)
     http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -81,12 +87,13 @@ func main() {
     }
 
     for _, ro := range rangeOptions {
-        timeRange := spotify.Timerange(ro)
-        res, _ := Call(*topItemType, ctx, timeRange)
+        timeRangeOpt := spotify.Timerange(ro)
+        limitOpt := spotify.Limit(limit)
+        res, _ := Call(itemType, ctx, timeRangeOpt, limitOpt)
 
-        fmt.Printf("\nTOP %v (%s)\n", *topItemType, ro)
+        fmt.Printf("\nTOP %d %v (%s)\n", limit, itemType, ro)
 
-        if *topItemType == "artists" {
+        if itemType == "artists" {
             results := res.(*spotify.FullArtistPage)
             for index, artist := range results.Artists {
                 fmt.Printf("%d. %s (%d)\n", index+1, artist.Name, artist.Popularity)
@@ -113,6 +120,18 @@ func Call(funcName string, params ...interface{}) (result interface{}, err error
     // get and return value represented by reflect.Value
     result = res[0].Interface()
     return
+}
+
+func validateOptions(itemType string, limit int) {
+    if itemType != "artists" && itemType != "tracks" {
+        err = errors.New("-type must be one of the following: artists, tracks")
+        handleError(err, "Invalid option")
+    }
+
+    if limit < 1 || limit > 50 {
+        err = errors.New("-limit must be between 1 and 50")
+        handleError(err, "Invalid option")
+    }
 }
 
 func completeAuth(w http.ResponseWriter, r *http.Request) {
