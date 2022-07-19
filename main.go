@@ -10,6 +10,7 @@ package main
 
 import (
     "context"
+    "flag"
     "fmt"
     "github.com/joho/godotenv"
     "github.com/zmb3/spotify/v2"
@@ -17,6 +18,7 @@ import (
     "log"
     "net/http"
     "os"
+    "reflect"
 )
 
 // redirectURI is the OAuth redirect URI for the application.
@@ -35,6 +37,9 @@ var (
                 spotifyauth.WithScopes(spotifyauth.ScopeUserReadPrivate, spotifyauth.ScopeUserTopRead))
     ch    = make(chan *spotify.Client)
     state = "abc123"
+
+    commandMap map[string]interface{}
+    rangeOptions = [3]spotify.Range{spotify.ShortTermRange, spotify.MediumTermRange, spotify.LongTermRange}
 )
 
 func init() {
@@ -42,7 +47,11 @@ func init() {
 }
 
 func main() {
-    // first start an HTTP server
+    // load command line options
+    topItemType := flag.String("type", "artists", "\"artists\" or \"tracks\"")
+    flag.Parse()
+
+    // start a HTTP server
     http.HandleFunc("/callback", completeAuth)
     http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
         log.Println("Got request for:", r.URL.String())
@@ -63,21 +72,47 @@ func main() {
     // use the client to make calls that require authorization
     user, err := client.CurrentUser(ctx)
     handleError(err, "Error fetching current user")
-    fmt.Println("You are logged in as:", user.ID)
+    fmt.Printf("You are logged in as: %s (%s)\n", user.DisplayName, user.ID)
 
-    rangeOptions := [3]spotify.Range{spotify.ShortTermRange, spotify.MediumTermRange, spotify.LongTermRange}
+    // create map of top item types and spotify functions
+    commandMap = map[string]interface{} {
+        "artists": client.CurrentUsersTopArtists,
+        "tracks": client.CurrentUsersTopTracks,
+    }
 
     for _, ro := range rangeOptions {
         timeRange := spotify.Timerange(ro)
+        res, _ := Call(*topItemType, ctx, timeRange)
 
-        topArtists, err := client.CurrentUsersTopArtists(ctx, timeRange)
-        handleError(err, "Error fetching current user's top artists")
-        fmt.Printf("\nTOP ARTISTS (%s)\n", ro)
+        fmt.Printf("\nTOP %v (%s)\n", *topItemType, ro)
 
-        for index, artist := range topArtists.Artists {
-            fmt.Printf("%d. %s (%d)\n", index+1, artist.Name, artist.Popularity)
+        if *topItemType == "artists" {
+            results := res.(*spotify.FullArtistPage)
+            for index, artist := range results.Artists {
+                fmt.Printf("%d. %s (%d)\n", index+1, artist.Name, artist.Popularity)
+            }
+        } else {
+            results := res.(*spotify.FullTrackPage)
+            for index, track := range results.Tracks {
+                fmt.Printf("%d. %s (%d)\n", index+1, track.Name, track.Popularity)
+            }
         }
     }
+}
+
+func Call(funcName string, params ...interface{}) (result interface{}, err error) {
+    f := reflect.ValueOf(commandMap[funcName])
+
+    in := make([]reflect.Value, len(params))
+    for k, param := range params {
+        in[k] = reflect.ValueOf(param)
+    }
+    var res []reflect.Value
+    res = f.Call(in)
+
+    // get and return value represented by reflect.Value
+    result = res[0].Interface()
+    return
 }
 
 func completeAuth(w http.ResponseWriter, r *http.Request) {
