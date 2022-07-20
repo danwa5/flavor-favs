@@ -16,6 +16,8 @@ import (
     "github.com/joho/godotenv"
     "github.com/zmb3/spotify/v2"
     "github.com/zmb3/spotify/v2/auth"
+    "golang.org/x/text/cases"
+    "golang.org/x/text/language"
     "log"
     "net/http"
     "os"
@@ -35,7 +37,7 @@ var (
                 spotifyauth.WithClientID(os.Getenv("SPOTIFY_ID")),
                 spotifyauth.WithClientSecret(os.Getenv("SPOTIFY_SECRET")),
                 spotifyauth.WithRedirectURL(redirectURI),
-                spotifyauth.WithScopes(spotifyauth.ScopeUserReadPrivate, spotifyauth.ScopeUserTopRead))
+                spotifyauth.WithScopes(spotifyauth.ScopeUserTopRead))
     ch    = make(chan *spotify.Client)
     state = "abc123"
 
@@ -43,6 +45,11 @@ var (
     limit int
 
     commandMap map[string]interface{}
+    rangeMap = map[spotify.Range]string{
+        spotify.ShortTermRange: "4 weeks",
+        spotify.MediumTermRange: "6 months",
+        spotify.LongTermRange: "several years",
+    }
     rangeOptions = [3]spotify.Range{spotify.ShortTermRange, spotify.MediumTermRange, spotify.LongTermRange}
 )
 
@@ -60,7 +67,7 @@ func main() {
     // start a HTTP server
     http.HandleFunc("/callback", completeAuth)
     http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-        log.Println("Got request for:", r.URL.String())
+        // log.Println("Got request for:", r.URL.String())
     })
     go func() {
         err := http.ListenAndServe(":8080", nil)
@@ -78,7 +85,7 @@ func main() {
     // use the client to make calls that require authorization
     user, err := client.CurrentUser(ctx)
     handleError(err, "Error fetching current user")
-    fmt.Printf("You are logged in as: %s (%s)\n", user.DisplayName, user.ID)
+    fmt.Printf("\nHi %s, here are your Spotify FLAVOR FAVS!\n", user.DisplayName)
 
     // create map of item types and spotify functions
     commandMap = map[string]interface{} {
@@ -91,20 +98,50 @@ func main() {
         limitOpt := spotify.Limit(limit)
         res, _ := Call(itemType, ctx, timeRangeOpt, limitOpt)
 
-        fmt.Printf("\nTOP %d %v (%s)\n", limit, itemType, ro)
+        fmt.Printf("\nTop %d %v from the last %s\n", limit, capitalize(itemType), rangeMap[ro])
 
         if itemType == "artists" {
-            results := res.(*spotify.FullArtistPage)
-            for index, artist := range results.Artists {
-                fmt.Printf("%d. %s (%d)\n", index+1, artist.Name, artist.Popularity)
-            }
+            displayArtistResults(res)
         } else {
-            results := res.(*spotify.FullTrackPage)
-            for index, track := range results.Tracks {
-                fmt.Printf("%d. %s %s (%d)\n", index+1, track.Name, buildArtistSentence(track.Artists), track.Popularity)
-            }
+            displayTrackResults(res)
         }
     }
+
+    displayNote(itemType)
+}
+
+func displayArtistResults(res interface{}) {
+    // use type assertion to get artists
+    results := res.(*spotify.FullArtistPage)
+    for i, artist := range results.Artists {
+        fmt.Printf("%d. %s (%d)\n", i+1, artist.Name, artist.Popularity)
+    }
+}
+
+func displayTrackResults(res interface{}) {
+    // use type assertion to get tracks
+    results := res.(*spotify.FullTrackPage)
+    for i, track := range results.Tracks {
+        fmt.Printf("%d. %s %s (%d)\n", i+1, track.Name, buildArtistSentence(track.Artists), track.Popularity)
+    }
+}
+
+func displayNote(itemType string) {
+    var note string
+
+    if itemType == "artists" {
+        note = "NOTE: The popularity score of an artist is in parenthesis and is between 0 and 100, with 100 being the most popular" +
+            " An artist's popularity is calculated from the popularity of the artist's tracks."
+    } else {
+        note = "NOTE: The popularity score of a track is in parenthesis and is between 0 and 100, with 100 being the most popular." +
+            " A track's popularity is calculated from both total plays and most recent plays."
+    }
+
+    fmt.Printf("\n%s\n", note)
+}
+
+func capitalize(str string) (string) {
+    return cases.Title(language.English).String(str)
 }
 
 func buildArtistSentence(artists []spotify.SimpleArtist) (result string) {
