@@ -80,7 +80,7 @@ func main() {
     handleError(err, "Error fetching current user")
     fmt.Printf("You are logged in as: %s (%s)\n", user.DisplayName, user.ID)
 
-    // create map of top item types and spotify functions
+    // create map of item types and spotify functions
     commandMap = map[string]interface{} {
         "artists": client.CurrentUsersTopArtists,
         "tracks": client.CurrentUsersTopTracks,
@@ -101,10 +101,21 @@ func main() {
         } else {
             results := res.(*spotify.FullTrackPage)
             for index, track := range results.Tracks {
-                fmt.Printf("%d. %s (%d)\n", index+1, track.Name, track.Popularity)
+                fmt.Printf("%d. %s %s (%d)\n", index+1, track.Name, buildArtistSentence(track.Artists), track.Popularity)
             }
         }
     }
+}
+
+func buildArtistSentence(artists []spotify.SimpleArtist) (result string) {
+    artistSentence := "by "
+    for i, artist := range artists {
+        if i > 0 {
+            artistSentence += ", "
+        }
+        artistSentence += artist.Name
+    }
+    return artistSentence
 }
 
 func Call(funcName string, params ...interface{}) (result interface{}, err error) {
