@@ -24,19 +24,14 @@ import (
     "reflect"
 )
 
-// redirectURI is the OAuth redirect URI for the application.
-// You must register an application at Spotify's developer portal
-// and enter this value.
-const redirectURI = "http://localhost:8080/callback"
-
 var (
-    // load env vars before instantiating global vars
+    // try to load env vars from .env
     err = godotenv.Load()
 
     auth  = spotifyauth.New(
-                spotifyauth.WithClientID(os.Getenv("SPOTIFY_ID")),
-                spotifyauth.WithClientSecret(os.Getenv("SPOTIFY_SECRET")),
-                spotifyauth.WithRedirectURL(redirectURI),
+                spotifyauth.WithClientID(os.Getenv("SPOTIFY_CLIENT_ID")),
+                spotifyauth.WithClientSecret(os.Getenv("SPOTIFY_CLIENT_SECRET")),
+                spotifyauth.WithRedirectURL(os.Getenv("SPOTIFY_REDIRECT_URI")),
                 spotifyauth.WithScopes(spotifyauth.ScopeUserTopRead))
     ch    = make(chan *spotify.Client)
     state = "abc123"
@@ -54,7 +49,7 @@ var (
 )
 
 func init() {
-    handleError(err, "Error loading .env file")
+    checkEnvVars()
 
     // parse command line options
     flag.StringVar(&itemType, "type", "artists", "\"artists\" or \"tracks\"")
@@ -197,6 +192,19 @@ func completeAuth(w http.ResponseWriter, r *http.Request) {
     client := spotify.New(auth.Client(r.Context(), tok))
     fmt.Fprintf(w, "Login Completed!")
     ch <- client
+}
+
+func checkEnvVars() {
+    var envVars = [3]string{"SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET", "SPOTIFY_REDIRECT_URI"}
+
+    for _, ev := range envVars {
+        val, present := os.LookupEnv(ev)
+
+        if present == false || len(val) == 0 {
+            err = errors.New(ev + " is missing")
+            handleError(err, "Required environment variable not found")
+        }
+    }
 }
 
 func handleError(err error, message string) {
